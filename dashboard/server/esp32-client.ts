@@ -6,7 +6,8 @@ type StatusHandler = (status: Esp32Status) => void;
 export interface Esp32Status {
   type: "status";
   state: "idle" | "shaking" | "resting" | "tuning";
-  shakeCount: number;
+  stepCount: number;
+  cycleCount: number;
   angle: number;
   uptimeMs: number;
   params: ShakeParams;
@@ -113,11 +114,11 @@ export class Esp32Client {
     // Track state transitions for session recording
     const prevState = this.lastState;
     this.lastState = status.state;
-    this.lastShakeCount = status.shakeCount;
+    this.lastShakeCount = status.stepCount;
 
     // Session started: idle/resting → shaking
     if (status.state === "shaking" && prevState !== "shaking" && prevState !== null) {
-      this.sessionStartCount = status.shakeCount - 1; // count increments on enter
+      this.sessionStartCount = status.stepCount;
       this.sessionStartTime = Date.now();
       this.activeSessionId = recordSessionStart(this.sessionStartCount, status.params);
     }
@@ -125,7 +126,7 @@ export class Esp32Client {
     // Session ended: shaking → resting/idle
     if (prevState === "shaking" && status.state !== "shaking" && this.activeSessionId !== null) {
       const durationS = Math.round((Date.now() - this.sessionStartTime) / 1000);
-      recordSessionEnd(this.activeSessionId, status.shakeCount, durationS);
+      recordSessionEnd(this.activeSessionId, status.stepCount, durationS);
       this.activeSessionId = null;
     }
   }

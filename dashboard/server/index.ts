@@ -20,7 +20,7 @@ const browserClients = new Set<ServerWebSocket<unknown>>();
 esp32.onStatus((status) => {
   const enriched = {
     ...status,
-    encounter: getEncounterInfo(status.shakeCount),
+    encounter: getEncounterInfo(status.stepCount),
     esp32Connected: esp32.isConnected,
   };
   const json = JSON.stringify(enriched);

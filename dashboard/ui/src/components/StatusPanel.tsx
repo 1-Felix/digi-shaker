@@ -22,7 +22,8 @@ export default function StatusPanel() {
       <Show when={s()} fallback={<span class="state-label idle">Waiting...</span>}>
         <div class={`state-label ${state()}`}>{state()}</div>
         <div class="stat-row">
-          <span>Cycle #{s()!.shakeCount}</span>
+          <span>Steps: {s()!.stepCount}</span>
+          <span>Cycle #{s()!.cycleCount}</span>
           <span>Uptime: {formatUptime(s()!.uptimeMs)}</span>
         </div>
         <div class="btn-row" style="margin-top: 0.75rem">

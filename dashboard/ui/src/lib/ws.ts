@@ -16,7 +16,8 @@ export interface EncounterInfo {
 export interface ShakerStatus {
   type: "status";
   state: "idle" | "shaking" | "resting" | "tuning";
-  shakeCount: number;
+  stepCount: number;
+  cycleCount: number;
   angle: number;
   uptimeMs: number;
   params: ShakeParams;
@@ -37,6 +38,26 @@ const [backendConnected, setBackendConnected] = createSignal(false);
 const [esp32Connected, setEsp32Connected] = createSignal(false);
 const [history, setHistory] = createSignal<DailyHistory[]>([]);
 
+export interface Toast {
+  id: number;
+  message: string;
+  type: "success" | "error" | "info";
+}
+const [toasts, setToasts] = createSignal<Toast[]>([]);
+let toastId = 0;
+
+export function addToast(message: string, type: Toast["type"] = "info") {
+  const id = ++toastId;
+  setToasts((prev) => [...prev, { id, message, type }]);
+  setTimeout(() => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, 3000);
+}
+
+export function dismissToast(id: number) {
+  setToasts((prev) => prev.filter((t) => t.id !== id));
+}
+
 let socket: WebSocket | null = null;
 
 function connect() {
@@ -46,7 +67,7 @@ function connect() {
 
   socket.addEventListener("open", () => {
     setBackendConnected(true);
-    // Request history on connect
+    addToast("Connected to dashboard", "success");
     socket?.send(JSON.stringify({ type: "history", days: 14 }));
   });
 
@@ -59,8 +80,13 @@ function connect() {
         setEsp32Connected(data.esp32Connected);
       } else if (data.type === "connection") {
         setEsp32Connected(data.esp32Connected);
+        if (!data.esp32Connected) {
+          addToast("ESP32 disconnected", "error");
+        }
       } else if (data.type === "history") {
         setHistory(data.data);
+      } else if (data.type === "error") {
+        addToast(data.message, "error");
       }
     } catch {
       // ignore
@@ -70,6 +96,7 @@ function connect() {
   socket.addEventListener("close", () => {
     setBackendConnected(false);
     setEsp32Connected(false);
+    addToast("Disconnected from dashboard", "error");
     socket = null;
     setTimeout(connect, 2000);
   });
@@ -81,14 +108,25 @@ function connect() {
 
 // --- Send helpers ---
 
-function send(data: Record<string, unknown>) {
+function send(data: Record<string, unknown>): boolean {
   if (socket?.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify(data));
+    return true;
   }
+  addToast("Not connected", "error");
+  return false;
 }
 
 export function sendCommand(action: string) {
-  send({ type: "command", action });
+  if (send({ type: "command", action })) {
+    const labels: Record<string, string> = {
+      start: "Starting shaker",
+      stop: "Stopping shaker",
+      tune: "Entering tuning mode",
+      resetCount: "Counter reset",
+    };
+    addToast(labels[action] ?? `Command: ${action}`, "success");
+  }
 }
 
 export function sendConfig(params: ShakeParams) {
@@ -100,7 +138,7 @@ export function sendTuneAngle(angle: number) {
 }
 
 export function resetCount() {
-  send({ type: "command", action: "resetCount" });
+  sendCommand("resetCount");
 }
 
 export function requestHistory(days = 14) {
@@ -110,4 +148,4 @@ export function requestHistory(days = 14) {
 // Initialize on import
 connect();
 
-export { status, backendConnected, esp32Connected, history };
+export { status, backendConnected, esp32Connected, history, toasts };

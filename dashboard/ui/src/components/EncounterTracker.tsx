@@ -3,7 +3,7 @@ import { status } from "../lib/ws";
 export default function EncounterTracker() {
   const s = () => status();
   const encounter = () => s()?.encounter;
-  const shakeCount = () => s()?.shakeCount ?? 0;
+  const stepCount = () => s()?.stepCount ?? 0;
 
   const probability = () => encounter()?.probability ?? 0;
   const percentLabel = () => `${Math.round(probability() * 100)}%`;
@@ -11,14 +11,14 @@ export default function EncounterTracker() {
   const shakesRemaining = () => {
     const remaining = encounter()?.estimatedShakesRemaining;
     if (remaining === null || remaining === undefined) return "–";
-    if (remaining === 0 && shakeCount() >= 550) return "Overdue";
+    if (remaining === 0 && stepCount() >= 550) return "Overdue";
     return `~${remaining}`;
   };
 
   const barWidth = () => {
-    if (shakeCount() >= 550) return 100;
-    if (shakeCount() < 400) return (shakeCount() / 550) * 100;
-    return (shakeCount() / 550) * 100;
+    if (stepCount() >= 550) return 100;
+    if (stepCount() < 400) return (stepCount() / 550) * 100;
+    return (stepCount() / 550) * 100;
   };
 
   const urgency = () => {
@@ -33,9 +33,12 @@ export default function EncounterTracker() {
     if (!remaining || !s()) return "–";
 
     const p = s()!.params;
-    // Each shake cycle = shakeDuration + restDuration seconds, and counts as 1 shake
-    const secondsPerShake = p.shakeDuration + p.restDuration;
-    const totalSeconds = remaining * secondsPerShake;
+    // Steps per cycle = frequency * shakeDuration
+    // Cycle time = shakeDuration + restDuration
+    const stepsPerCycle = p.frequency * p.shakeDuration;
+    const cycleTimeS = p.shakeDuration + p.restDuration;
+    const cyclesNeeded = remaining / stepsPerCycle;
+    const totalSeconds = cyclesNeeded * cycleTimeS;
     const minutes = Math.floor(totalSeconds / 60);
 
     if (minutes < 1) return `< 1 min`;
@@ -56,7 +59,7 @@ export default function EncounterTracker() {
       </div>
 
       <div class="encounter-stats">
-        <span>Shakes: {shakeCount()}</span>
+        <span>Shakes: {stepCount()}</span>
         <span>Remaining: {shakesRemaining()}</span>
         <span>ETA: {estimatedTime()}</span>
       </div>

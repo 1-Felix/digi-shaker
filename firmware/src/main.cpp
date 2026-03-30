@@ -12,7 +12,9 @@ enum ShakeState { IDLE, SHAKING, RESTING, TUNING };
 
 ShakeState state = IDLE;
 unsigned long stateStartMs = 0;
-unsigned long shakeCount = 0;
+unsigned long stepCount = 0;
+unsigned long cycleCount = 0;
+int lastSinSign = 0; // tracks zero-crossings for step counting
 
 // --- Runtime parameters (defaults from config.h) ---
 int centerAngle = DEFAULT_CENTER_ANGLE;
@@ -73,10 +75,13 @@ void enterShaking() {
     state = SHAKING;
     stateStartMs = millis();
     attachServo();
-    shakeCount++;
+    lastSinSign = 0;
+    cycleCount++;
     Serial.print("[SHAKE] Cycle #");
-    Serial.print(shakeCount);
-    Serial.print(" started at ");
+    Serial.print(cycleCount);
+    Serial.print(" (steps: ");
+    Serial.print(stepCount);
+    Serial.print(") started at ");
     Serial.print(millis() / 1000);
     Serial.println("s");
 }
@@ -87,8 +92,10 @@ void enterResting() {
     setServoAngle(centerAngle);
     delay(50);
     detachServo();
-    Serial.print("[REST] Resting. Total cycles: ");
-    Serial.println(shakeCount);
+    Serial.print("[REST] Resting. Steps: ");
+    Serial.print(stepCount);
+    Serial.print(" Cycles: ");
+    Serial.println(cycleCount);
 }
 
 void enterTuning() {
@@ -115,7 +122,8 @@ void broadcastStatus() {
         case TUNING:  doc["state"] = "tuning"; break;
     }
 
-    doc["shakeCount"] = shakeCount;
+    doc["stepCount"] = stepCount;
+    doc["cycleCount"] = cycleCount;
     doc["angle"] = currentAngle;
     doc["uptimeMs"] = millis();
 
@@ -161,8 +169,9 @@ void handleMessage(uint8_t clientNum, const String& payload) {
         } else if (strcmp(action, "tune") == 0) {
             enterTuning();
         } else if (strcmp(action, "resetCount") == 0) {
-            shakeCount = 0;
-            Serial.println("[WS] Shake counter reset");
+            stepCount = 0;
+            cycleCount = 0;
+            Serial.println("[WS] Counters reset");
         }
 
     } else if (strcmp(type, "config") == 0) {
@@ -309,8 +318,16 @@ void loop() {
                 break;
             }
             float t = elapsed / 1000.0f;
-            float angle = centerAngle + amplitude * sin(2.0f * PI * frequencyHz * t);
+            float sinVal = sin(2.0f * PI * frequencyHz * t);
+            float angle = centerAngle + amplitude * sinVal;
             setServoAngle((int)angle);
+
+            // Count steps: each positive zero-crossing = 1 oscillation = 1 step
+            int sinSign = (sinVal >= 0) ? 1 : -1;
+            if (lastSinSign < 0 && sinSign >= 0) {
+                stepCount++;
+            }
+            lastSinSign = sinSign;
             break;
         }
 
