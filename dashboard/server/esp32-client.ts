@@ -21,6 +21,7 @@ export class Esp32Client {
   private connected = false;
   private lastState: string | null = null;
   private lastShakeCount = 0;
+  private _lastParams: ShakeParams | null = null;
   private activeSessionId: number | null = null;
   private sessionStartCount = 0;
   private sessionStartTime = 0;
@@ -29,6 +30,10 @@ export class Esp32Client {
 
   get isConnected() {
     return this.connected;
+  }
+
+  get lastParams() {
+    return this._lastParams;
   }
 
   onStatus(handler: StatusHandler) {
@@ -115,6 +120,7 @@ export class Esp32Client {
     const prevState = this.lastState;
     this.lastState = status.state;
     this.lastShakeCount = status.stepCount;
+    this._lastParams = status.params;
 
     // Session started: idle/resting → shaking
     if (status.state === "shaking" && prevState !== "shaking" && prevState !== null) {

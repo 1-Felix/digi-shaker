@@ -22,6 +22,9 @@ export interface ShakerStatus {
   uptimeMs: number;
   params: ShakeParams;
   encounter: EncounterInfo;
+  calibrationRatio: number;
+  calibrationSource: "config" | "global" | "none";
+  calibratedStepCount: number;
   esp32Connected: boolean;
 }
 
@@ -32,11 +35,39 @@ export interface DailyHistory {
   encounters: Array<{ occurredAt: string; shakeCount: number }>;
 }
 
+export interface CalibrationSample {
+  id: number;
+  createdAt: string;
+  oscillationCount: number;
+  actualSteps: number;
+  ratio: number;
+  centerAngle: number;
+  amplitude: number;
+  frequency: number;
+}
+
+export interface ConfigEfficiency {
+  centerAngle: number;
+  amplitude: number;
+  frequency: number;
+  avgRatio: number;
+  sampleCount: number;
+  samples: CalibrationSample[];
+}
+
+export interface CalibrationData {
+  ratio: number;
+  source: "config" | "global" | "none";
+  sampleCount: number;
+  history: ConfigEfficiency[];
+}
+
 // --- Signals ---
 const [status, setStatus] = createSignal<ShakerStatus | null>(null);
 const [backendConnected, setBackendConnected] = createSignal(false);
 const [esp32Connected, setEsp32Connected] = createSignal(false);
 const [history, setHistory] = createSignal<DailyHistory[]>([]);
+const [calibrationData, setCalibrationData] = createSignal<CalibrationData | null>(null);
 
 export interface Toast {
   id: number;
@@ -69,6 +100,7 @@ function connect() {
     setBackendConnected(true);
     addToast("Connected to dashboard", "success");
     socket?.send(JSON.stringify({ type: "history", days: 14 }));
+    socket?.send(JSON.stringify({ type: "getCalibration" }));
   });
 
   socket.addEventListener("message", (event) => {
@@ -85,6 +117,8 @@ function connect() {
         }
       } else if (data.type === "history") {
         setHistory(data.data);
+      } else if (data.type === "calibrationUpdate") {
+        setCalibrationData(data);
       } else if (data.type === "error") {
         addToast(data.message, "error");
       }
@@ -145,7 +179,23 @@ export function requestHistory(days = 14) {
   send({ type: "history", days });
 }
 
+export function submitCalibration(oscillationCount: number, actualSteps: number) {
+  if (send({ type: "calibration", oscillationCount, actualSteps })) {
+    addToast("Calibration saved", "success");
+  }
+}
+
+export function requestCalibration() {
+  send({ type: "getCalibration" });
+}
+
+export function deleteCalibrationSample(id: number) {
+  if (send({ type: "deleteCalibration", id })) {
+    addToast("Sample deleted", "info");
+  }
+}
+
 // Initialize on import
 connect();
 
-export { status, backendConnected, esp32Connected, history, toasts };
+export { status, backendConnected, esp32Connected, history, toasts, calibrationData };

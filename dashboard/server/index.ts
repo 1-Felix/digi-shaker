@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { Esp32Client } from "./esp32-client";
 import { getEncounterInfo } from "./encounter";
-import { getHistory } from "./db";
+import { getHistory, insertCalibration, deleteCalibration, getCalibrationRatio, getCalibrationHistory } from "./db";
 import type { ServerWebSocket } from "bun";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -18,9 +18,16 @@ const browserClients = new Set<ServerWebSocket<unknown>>();
 
 // Relay ESP32 status to all browser clients with encounter enrichment
 esp32.onStatus((status) => {
+  const calibration = getCalibrationRatio(
+    status.params.center, status.params.amplitude, status.params.frequency,
+  );
+  const calibratedStepCount = Math.round(status.stepCount * calibration.ratio);
   const enriched = {
     ...status,
-    encounter: getEncounterInfo(status.stepCount),
+    encounter: getEncounterInfo(calibratedStepCount),
+    calibrationRatio: calibration.ratio,
+    calibrationSource: calibration.source,
+    calibratedStepCount,
     esp32Connected: esp32.isConnected,
   };
   const json = JSON.stringify(enriched);
@@ -74,13 +81,12 @@ const server = Bun.serve({
       try {
         const data = JSON.parse(String(message));
 
-        if (!esp32.isConnected) {
-          ws.send(JSON.stringify({ type: "error", message: "ESP32 not connected" }));
-          return;
-        }
-
         switch (data.type) {
           case "command":
+            if (!esp32.isConnected) {
+              ws.send(JSON.stringify({ type: "error", message: "ESP32 not connected" }));
+              return;
+            }
             if (data.action === "resetCount") {
               esp32.sendResetCount();
             } else {
@@ -88,9 +94,17 @@ const server = Bun.serve({
             }
             break;
           case "config":
+            if (!esp32.isConnected) {
+              ws.send(JSON.stringify({ type: "error", message: "ESP32 not connected" }));
+              return;
+            }
             esp32.sendConfig(data.params);
             break;
           case "tune":
+            if (!esp32.isConnected) {
+              ws.send(JSON.stringify({ type: "error", message: "ESP32 not connected" }));
+              return;
+            }
             esp32.sendTuneAngle(data.angle);
             break;
           case "history":
@@ -99,6 +113,49 @@ const server = Bun.serve({
               data: getHistory(data.days ?? 14),
             }));
             break;
+          case "calibration": {
+            const params = esp32.lastParams;
+            if (!params) {
+              ws.send(JSON.stringify({ type: "error", message: "No ESP32 params available" }));
+              return;
+            }
+            insertCalibration(
+              data.oscillationCount, data.actualSteps,
+              params.center, params.amplitude, params.frequency,
+            );
+            const ratio = getCalibrationRatio(params.center, params.amplitude, params.frequency);
+            ws.send(JSON.stringify({
+              type: "calibrationUpdate",
+              ...ratio,
+              history: getCalibrationHistory(),
+            }));
+            break;
+          }
+          case "getCalibration": {
+            const params = esp32.lastParams;
+            const ratio = params
+              ? getCalibrationRatio(params.center, params.amplitude, params.frequency)
+              : { ratio: 1.0, source: "none", sampleCount: 0 };
+            ws.send(JSON.stringify({
+              type: "calibrationUpdate",
+              ...ratio,
+              history: getCalibrationHistory(),
+            }));
+            break;
+          }
+          case "deleteCalibration": {
+            deleteCalibration(data.id);
+            const params = esp32.lastParams;
+            const ratio = params
+              ? getCalibrationRatio(params.center, params.amplitude, params.frequency)
+              : { ratio: 1.0, source: "none", sampleCount: 0 };
+            ws.send(JSON.stringify({
+              type: "calibrationUpdate",
+              ...ratio,
+              history: getCalibrationHistory(),
+            }));
+            break;
+          }
         }
       } catch {
         // ignore malformed messages

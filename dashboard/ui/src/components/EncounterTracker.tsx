@@ -3,7 +3,9 @@ import { status } from "../lib/ws";
 export default function EncounterTracker() {
   const s = () => status();
   const encounter = () => s()?.encounter;
-  const stepCount = () => s()?.stepCount ?? 0;
+  const rawSteps = () => s()?.stepCount ?? 0;
+  const calibratedSteps = () => s()?.calibratedStepCount ?? rawSteps();
+  const isCalibrated = () => (s()?.calibrationSource ?? "none") !== "none";
 
   const probability = () => encounter()?.probability ?? 0;
   const percentLabel = () => `${Math.round(probability() * 100)}%`;
@@ -11,14 +13,14 @@ export default function EncounterTracker() {
   const shakesRemaining = () => {
     const remaining = encounter()?.estimatedShakesRemaining;
     if (remaining === null || remaining === undefined) return "–";
-    if (remaining === 0 && stepCount() >= 550) return "Overdue";
+    if (remaining === 0 && calibratedSteps() >= 550) return "Overdue";
     return `~${remaining}`;
   };
 
   const barWidth = () => {
-    if (stepCount() >= 550) return 100;
-    if (stepCount() < 400) return (stepCount() / 550) * 100;
-    return (stepCount() / 550) * 100;
+    const steps = calibratedSteps();
+    if (steps >= 550) return 100;
+    return (steps / 550) * 100;
   };
 
   const urgency = () => {
@@ -33,16 +35,23 @@ export default function EncounterTracker() {
     if (!remaining || !s()) return "–";
 
     const p = s()!.params;
-    // Steps per cycle = frequency * shakeDuration
-    // Cycle time = shakeDuration + restDuration
-    const stepsPerCycle = p.frequency * p.shakeDuration;
+    const ratio = s()!.calibrationRatio ?? 1;
+    // Calibrated steps per cycle = frequency * shakeDuration * ratio
+    const calibratedStepsPerCycle = p.frequency * p.shakeDuration * ratio;
     const cycleTimeS = p.shakeDuration + p.restDuration;
-    const cyclesNeeded = remaining / stepsPerCycle;
+    const cyclesNeeded = remaining / calibratedStepsPerCycle;
     const totalSeconds = cyclesNeeded * cycleTimeS;
     const minutes = Math.floor(totalSeconds / 60);
 
-    if (minutes < 1) return `< 1 min`;
+    if (minutes < 1) return "< 1 min";
     return `~${minutes} min`;
+  };
+
+  const stepsDisplay = () => {
+    if (isCalibrated()) {
+      return `~${calibratedSteps()} / ${rawSteps()} steps`;
+    }
+    return `${rawSteps()} steps`;
   };
 
   return (
@@ -59,7 +68,7 @@ export default function EncounterTracker() {
       </div>
 
       <div class="encounter-stats">
-        <span>Shakes: {stepCount()}</span>
+        <span>{stepsDisplay()}</span>
         <span>Remaining: {shakesRemaining()}</span>
         <span>ETA: {estimatedTime()}</span>
       </div>

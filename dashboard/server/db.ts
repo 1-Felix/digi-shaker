@@ -46,6 +46,19 @@ db.exec(`
   )
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS calibrations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    oscillation_count INTEGER NOT NULL,
+    actual_steps INTEGER NOT NULL,
+    ratio REAL NOT NULL,
+    center_angle INTEGER NOT NULL,
+    amplitude INTEGER NOT NULL,
+    frequency REAL NOT NULL
+  )
+`);
+
 // Ensure config row exists
 db.exec(`INSERT OR IGNORE INTO config (id) VALUES (1)`);
 
@@ -162,6 +175,117 @@ export function getHistory(days = 14): DailyHistory[] {
   }
 
   return Array.from(dayMap.values()).sort((a, b) => b.date.localeCompare(a.date));
+}
+
+// --- Calibration helpers ---
+
+export interface CalibrationSample {
+  id: number;
+  createdAt: string;
+  oscillationCount: number;
+  actualSteps: number;
+  ratio: number;
+  centerAngle: number;
+  amplitude: number;
+  frequency: number;
+}
+
+export interface ConfigEfficiency {
+  centerAngle: number;
+  amplitude: number;
+  frequency: number;
+  avgRatio: number;
+  sampleCount: number;
+  samples: CalibrationSample[];
+}
+
+export function insertCalibration(
+  oscillationCount: number,
+  actualSteps: number,
+  centerAngle: number,
+  amplitude: number,
+  frequency: number,
+): number {
+  const ratio = actualSteps / oscillationCount;
+  const result = db.query(`
+    INSERT INTO calibrations (oscillation_count, actual_steps, ratio, center_angle, amplitude, frequency)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(oscillationCount, actualSteps, ratio, centerAngle, amplitude, frequency);
+  return Number(result.lastInsertRowid);
+}
+
+export function deleteCalibration(id: number) {
+  db.query("DELETE FROM calibrations WHERE id = ?").run(id);
+}
+
+export function getCalibrationRatio(centerAngle: number, amplitude: number, frequency: number): { ratio: number; source: "config" | "global" | "none"; sampleCount: number } {
+  // Tier 1: exact config match
+  const configMatch = db.query(`
+    SELECT AVG(ratio) as avg_ratio, COUNT(*) as cnt
+    FROM calibrations
+    WHERE center_angle = ? AND amplitude = ? AND frequency = ?
+  `).get(centerAngle, amplitude, frequency) as { avg_ratio: number | null; cnt: number };
+
+  if (configMatch.avg_ratio !== null && configMatch.cnt > 0) {
+    return { ratio: configMatch.avg_ratio, source: "config", sampleCount: configMatch.cnt };
+  }
+
+  // Tier 2: global average
+  const globalMatch = db.query(`
+    SELECT AVG(ratio) as avg_ratio, COUNT(*) as cnt FROM calibrations
+  `).get() as { avg_ratio: number | null; cnt: number };
+
+  if (globalMatch.avg_ratio !== null && globalMatch.cnt > 0) {
+    return { ratio: globalMatch.avg_ratio, source: "global", sampleCount: globalMatch.cnt };
+  }
+
+  // Tier 3: no calibrations
+  return { ratio: 1.0, source: "none", sampleCount: 0 };
+}
+
+export function getCalibrationHistory(): ConfigEfficiency[] {
+  const rows = db.query(`
+    SELECT id, created_at, oscillation_count, actual_steps, ratio, center_angle, amplitude, frequency
+    FROM calibrations ORDER BY created_at DESC
+  `).all() as Array<{
+    id: number; created_at: string; oscillation_count: number; actual_steps: number;
+    ratio: number; center_angle: number; amplitude: number; frequency: number;
+  }>;
+
+  const configMap = new Map<string, ConfigEfficiency>();
+
+  for (const row of rows) {
+    const key = `${row.center_angle}:${row.amplitude}:${row.frequency}`;
+    let config = configMap.get(key);
+    if (!config) {
+      config = {
+        centerAngle: row.center_angle,
+        amplitude: row.amplitude,
+        frequency: row.frequency,
+        avgRatio: 0,
+        sampleCount: 0,
+        samples: [],
+      };
+      configMap.set(key, config);
+    }
+    config.samples.push({
+      id: row.id,
+      createdAt: row.created_at,
+      oscillationCount: row.oscillation_count,
+      actualSteps: row.actual_steps,
+      ratio: row.ratio,
+      centerAngle: row.center_angle,
+      amplitude: row.amplitude,
+      frequency: row.frequency,
+    });
+  }
+
+  for (const config of configMap.values()) {
+    config.sampleCount = config.samples.length;
+    config.avgRatio = config.samples.reduce((sum, s) => sum + s.ratio, 0) / config.sampleCount;
+  }
+
+  return Array.from(configMap.values()).sort((a, b) => b.avgRatio - a.avgRatio);
 }
 
 export default db;
