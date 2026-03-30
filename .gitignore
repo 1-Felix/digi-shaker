@@ -20,8 +20,6 @@ firmware/include/wifi_credentials.h
 dashboard/node_modules/
 dashboard/ui/node_modules/
 dashboard/dist/
-dashboard/bun.lock
-dashboard/ui/bun.lock
 
 # SQLite data
 data/
