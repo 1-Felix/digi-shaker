@@ -1,0 +1,27 @@
+# PlatformIO
+.pio/
+.vscode/
+
+# Build artifacts
+*.o
+*.obj
+*.elf
+*.bin
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+secrets.yaml
+firmware/include/wifi_credentials.h
+
+# Bun
+dashboard/node_modules/
+dashboard/ui/node_modules/
+dashboard/dist/
+dashboard/bun.lock
+dashboard/ui/bun.lock
+
+# SQLite data
+data/

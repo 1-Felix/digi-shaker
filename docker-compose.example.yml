@@ -1,0 +1,15 @@
+services:
+  digi-shaker:
+    image: ghcr.io/1-felix/digi-shaker:latest
+    # Or build locally:
+    # build:
+    #   context: ./dashboard
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - ESP32_HOST=digi-shaker.local
+      # - ESP32_PORT=81
+      # - PORT=3000
+    restart: unless-stopped
