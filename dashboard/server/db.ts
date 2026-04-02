@@ -55,9 +55,17 @@ db.exec(`
     ratio REAL NOT NULL,
     center_angle INTEGER NOT NULL,
     amplitude INTEGER NOT NULL,
-    frequency REAL NOT NULL
+    frequency REAL NOT NULL,
+    shaking_duration_s REAL
   )
 `);
+
+// Migration: add shaking_duration_s to existing calibrations table
+try {
+  db.exec(`ALTER TABLE calibrations ADD COLUMN shaking_duration_s REAL`);
+} catch {
+  // Column already exists
+}
 
 // Ensure config row exists
 db.exec(`INSERT OR IGNORE INTO config (id) VALUES (1)`);
@@ -188,6 +196,7 @@ export interface CalibrationSample {
   centerAngle: number;
   amplitude: number;
   frequency: number;
+  shakingDurationS: number | null;
 }
 
 export interface ConfigEfficiency {
@@ -195,6 +204,8 @@ export interface ConfigEfficiency {
   amplitude: number;
   frequency: number;
   avgRatio: number;
+  throughput: number;
+  throughputMeasured: boolean;
   sampleCount: number;
   samples: CalibrationSample[];
 }
@@ -205,12 +216,13 @@ export function insertCalibration(
   centerAngle: number,
   amplitude: number,
   frequency: number,
+  shakingDurationS?: number,
 ): number {
   const ratio = actualSteps / oscillationCount;
   const result = db.query(`
-    INSERT INTO calibrations (oscillation_count, actual_steps, ratio, center_angle, amplitude, frequency)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(oscillationCount, actualSteps, ratio, centerAngle, amplitude, frequency);
+    INSERT INTO calibrations (oscillation_count, actual_steps, ratio, center_angle, amplitude, frequency, shaking_duration_s)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(oscillationCount, actualSteps, ratio, centerAngle, amplitude, frequency, shakingDurationS ?? null);
   return Number(result.lastInsertRowid);
 }
 
@@ -245,12 +257,19 @@ export function getCalibrationRatio(centerAngle: number, amplitude: number, freq
 
 export function getCalibrationHistory(): ConfigEfficiency[] {
   const rows = db.query(`
-    SELECT id, created_at, oscillation_count, actual_steps, ratio, center_angle, amplitude, frequency
+    SELECT id, created_at, oscillation_count, actual_steps, ratio, center_angle, amplitude, frequency, shaking_duration_s
     FROM calibrations ORDER BY created_at DESC
   `).all() as Array<{
     id: number; created_at: string; oscillation_count: number; actual_steps: number;
     ratio: number; center_angle: number; amplitude: number; frequency: number;
+    shaking_duration_s: number | null;
   }>;
+
+  // Get current config for computed throughput fallback
+  const currentConfig = getLastConfig();
+  const shakeDuration = currentConfig?.shakeDuration ?? 30;
+  const restDuration = currentConfig?.restDuration ?? 5;
+  const dutyCycle = shakeDuration / (shakeDuration + restDuration);
 
   const configMap = new Map<string, ConfigEfficiency>();
 
@@ -263,6 +282,8 @@ export function getCalibrationHistory(): ConfigEfficiency[] {
         amplitude: row.amplitude,
         frequency: row.frequency,
         avgRatio: 0,
+        throughput: 0,
+        throughputMeasured: false,
         sampleCount: 0,
         samples: [],
       };
@@ -277,15 +298,29 @@ export function getCalibrationHistory(): ConfigEfficiency[] {
       centerAngle: row.center_angle,
       amplitude: row.amplitude,
       frequency: row.frequency,
+      shakingDurationS: row.shaking_duration_s,
     });
   }
 
   for (const config of configMap.values()) {
     config.sampleCount = config.samples.length;
     config.avgRatio = config.samples.reduce((sum, s) => sum + s.ratio, 0) / config.sampleCount;
+
+    // Compute throughput: prefer measured (from samples with duration), fall back to computed
+    const measuredSamples = config.samples.filter((s) => s.shakingDurationS !== null && s.shakingDurationS > 0);
+    if (measuredSamples.length > 0) {
+      const totalSteps = measuredSamples.reduce((sum, s) => sum + s.actualSteps, 0);
+      const totalDurationS = measuredSamples.reduce((sum, s) => sum + (s.shakingDurationS ?? 0), 0);
+      config.throughput = totalSteps / (totalDurationS / 60);
+      config.throughputMeasured = true;
+    } else {
+      // Computed: freq × avgRatio × 60 × dutyCycle
+      config.throughput = config.frequency * config.avgRatio * 60 * dutyCycle;
+      config.throughputMeasured = false;
+    }
   }
 
-  return Array.from(configMap.values()).sort((a, b) => b.avgRatio - a.avgRatio);
+  return Array.from(configMap.values()).sort((a, b) => b.throughput - a.throughput);
 }
 
 export default db;

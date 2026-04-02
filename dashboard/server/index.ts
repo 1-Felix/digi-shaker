@@ -16,8 +16,33 @@ esp32.connect();
 // --- Browser WebSocket clients ---
 const browserClients = new Set<ServerWebSocket<unknown>>();
 
+// --- Calibration tracking per client ---
+interface CalibrationState {
+  shakingMs: number;
+  lastShakingStart: number | null;
+  lastState: string | null;
+}
+
+const calibrationTracking = new Map<ServerWebSocket<unknown>, CalibrationState>();
+
 // Relay ESP32 status to all browser clients with encounter enrichment
 esp32.onStatus((status) => {
+  // Update shaking duration for active calibration runs
+  for (const [, cal] of calibrationTracking) {
+    const now = Date.now();
+    if (cal.lastState === "shaking" && status.state !== "shaking") {
+      // Transitioned away from shaking — accumulate elapsed
+      if (cal.lastShakingStart !== null) {
+        cal.shakingMs += now - cal.lastShakingStart;
+        cal.lastShakingStart = null;
+      }
+    } else if (cal.lastState !== "shaking" && status.state === "shaking") {
+      // Transitioned into shaking — start timing
+      cal.lastShakingStart = now;
+    }
+    cal.lastState = status.state;
+  }
+
   const calibration = getCalibrationRatio(
     status.params.center, status.params.amplitude, status.params.frequency,
   );
@@ -113,6 +138,31 @@ const server = Bun.serve({
               data: getHistory(data.days ?? 14),
             }));
             break;
+          case "startCalibration": {
+            calibrationTracking.set(ws, {
+              shakingMs: 0,
+              lastShakingStart: null,
+              lastState: null,
+            });
+            break;
+          }
+          case "stopCalibration": {
+            const cal = calibrationTracking.get(ws);
+            let shakingDurationS = 0;
+            if (cal) {
+              // Finalize any in-progress shaking interval
+              if (cal.lastShakingStart !== null) {
+                cal.shakingMs += Date.now() - cal.lastShakingStart;
+              }
+              shakingDurationS = Math.round(cal.shakingMs / 1000 * 10) / 10;
+              calibrationTracking.delete(ws);
+            }
+            ws.send(JSON.stringify({
+              type: "calibrationStopped",
+              shakingDurationS,
+            }));
+            break;
+          }
           case "calibration": {
             const params = esp32.lastParams;
             if (!params) {
@@ -122,6 +172,7 @@ const server = Bun.serve({
             insertCalibration(
               data.oscillationCount, data.actualSteps,
               params.center, params.amplitude, params.frequency,
+              data.shakingDurationS,
             );
             const ratio = getCalibrationRatio(params.center, params.amplitude, params.frequency);
             ws.send(JSON.stringify({
@@ -163,6 +214,7 @@ const server = Bun.serve({
     },
     close(ws) {
       browserClients.delete(ws);
+      calibrationTracking.delete(ws);
       console.log(`[WS] Browser disconnected (${browserClients.size} total)`);
     },
   },

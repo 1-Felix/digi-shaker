@@ -44,6 +44,7 @@ export interface CalibrationSample {
   centerAngle: number;
   amplitude: number;
   frequency: number;
+  shakingDurationS: number | null;
 }
 
 export interface ConfigEfficiency {
@@ -51,6 +52,8 @@ export interface ConfigEfficiency {
   amplitude: number;
   frequency: number;
   avgRatio: number;
+  throughput: number;
+  throughputMeasured: boolean;
   sampleCount: number;
   samples: CalibrationSample[];
 }
@@ -68,6 +71,7 @@ const [backendConnected, setBackendConnected] = createSignal(false);
 const [esp32Connected, setEsp32Connected] = createSignal(false);
 const [history, setHistory] = createSignal<DailyHistory[]>([]);
 const [calibrationData, setCalibrationData] = createSignal<CalibrationData | null>(null);
+const [trackedShakingDuration, setTrackedShakingDuration] = createSignal<number | null>(null);
 
 export interface Toast {
   id: number;
@@ -119,6 +123,8 @@ function connect() {
         setHistory(data.data);
       } else if (data.type === "calibrationUpdate") {
         setCalibrationData(data);
+      } else if (data.type === "calibrationStopped") {
+        setTrackedShakingDuration(data.shakingDurationS);
       } else if (data.type === "error") {
         addToast(data.message, "error");
       }
@@ -179,8 +185,17 @@ export function requestHistory(days = 14) {
   send({ type: "history", days });
 }
 
-export function submitCalibration(oscillationCount: number, actualSteps: number) {
-  if (send({ type: "calibration", oscillationCount, actualSteps })) {
+export function startCalibrationTracking() {
+  send({ type: "startCalibration" });
+  setTrackedShakingDuration(null);
+}
+
+export function stopCalibrationTracking() {
+  send({ type: "stopCalibration" });
+}
+
+export function submitCalibration(oscillationCount: number, actualSteps: number, shakingDurationS?: number) {
+  if (send({ type: "calibration", oscillationCount, actualSteps, shakingDurationS })) {
     addToast("Calibration saved", "success");
   }
 }
@@ -198,4 +213,4 @@ export function deleteCalibrationSample(id: number) {
 // Initialize on import
 connect();
 
-export { status, backendConnected, esp32Connected, history, toasts, calibrationData };
+export { status, backendConnected, esp32Connected, history, toasts, calibrationData, trackedShakingDuration };

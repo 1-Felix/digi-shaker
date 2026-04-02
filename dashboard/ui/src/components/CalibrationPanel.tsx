@@ -1,7 +1,8 @@
 import { createSignal, Show, For } from "solid-js";
 import {
-  status, calibrationData, sendCommand,
+  status, calibrationData, sendCommand, trackedShakingDuration,
   submitCalibration, deleteCalibrationSample, requestCalibration,
+  startCalibrationTracking, stopCalibrationTracking,
 } from "../lib/ws";
 
 export default function CalibrationPanel() {
@@ -21,6 +22,7 @@ export default function CalibrationPanel() {
     setCalibrating(true);
     setShowDone(false);
     setActualSteps("");
+    startCalibrationTracking();
     // Start shaking if idle
     if (s()?.state === "idle" || s()?.state === "tuning") {
       sendCommand("start");
@@ -32,6 +34,7 @@ export default function CalibrationPanel() {
     setOscillations(current - startStepCount());
     setCalibrating(false);
     setShowDone(true);
+    stopCalibrationTracking();
     sendCommand("stop");
   }
 
@@ -39,7 +42,7 @@ export default function CalibrationPanel() {
     const steps = parseInt(actualSteps());
     const osc = oscillations();
     if (isNaN(steps) || steps <= 0 || steps > osc) return;
-    submitCalibration(osc, steps);
+    submitCalibration(osc, steps, trackedShakingDuration() ?? undefined);
     setShowDone(false);
     setActualSteps("");
     // Refresh calibration data
@@ -154,7 +157,7 @@ export default function CalibrationPanel() {
                       </span>
                     </div>
                     <span class="history-stats">
-                      {Math.round(config.avgRatio * 100)}% ({config.sampleCount} samples)
+                      {Math.round(config.throughput)} steps/min, {Math.round(config.avgRatio * 100)}% eff ({config.sampleCount})
                     </span>
                   </div>
                   <Show when={expanded()}>
